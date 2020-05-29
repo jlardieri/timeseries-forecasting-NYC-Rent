@@ -1,30 +1,17 @@
----
-title: "Time Series Forecasting - NYC rental prices"
-author: "Jordan Lardieri"
-date: "4/30/2020"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
 #libraries
-```{r}
 library(dplyr)
 library(zoo)
 library(data.table)
 library(tidyr)
 library(tseries)
 library(forecast)
-```
 
-Median Rental Prices in NYC 01/10 - 03/20 (data as of 4/25/20) from StreetEasy.
-https://streeteasy.com/blog/data-dashboard/
-
+#Median Rental Prices in NYC 01/10 - 03/20 (data as of 4/25/20) from StreetEasy.
+##https://streeteasy.com/blog/data-dashboard/
+  
 #read in data : 
-the full downloadable dataset does not break out rental type, so I read them in separately and combined
-```{r}
+#the full downloadable dataset does not break out rental type, so I read them in separately and combined
 setwd("")
 OneBd <- read.csv("rentals2/OneBd/medianAskingRent_OneBd.csv")
 OneBd$RentalType <- "OneBd"
@@ -37,12 +24,8 @@ TwoBd$RentalType <- "TwoBd"
 
 df <- Reduce(function(x,y) merge(x,y,all=TRUE),list(Studio,OneBd,TwoBd,ThreePlusBd))%>%select("RentalType",everything())
 head(df)
-df
-```
-
 
 #clean data :
-```{r}
 #remove rows where there are more than 3 consecutive NA values 
 nyc_rent <- df[apply(df, 1, function(x) all(with(rle(is.na(x)), lengths[values]) <3)),]
 
@@ -51,11 +34,8 @@ nyc_rent_clean <- zoo::na.locf(nyc_rent, fromLast=TRUE)
 
 #clean rental column names
 names(nyc_rent_clean)[5:127] <- substring(names(nyc_rent_clean)[5:127],2)
-#nyc_rent_clean
-```
 
 #transform data :
-```{r}
 #transform data to have single record per year per month
 nyc_rent_agg <- nyc_rent_clean %>% pivot_longer(-c(RentalType:areaType))%>%separate(name,into=c("year","month"))
 
@@ -68,81 +48,65 @@ nyc_rent_agg$date <- as.yearmon(paste(nyc_rent_agg$year,nyc_rent_agg$month),"%Y 
 #convert date type to date
 nyc_rent_agg <- transform(nyc_rent_agg, date = as.Date(date))
 #nyc_rent_agg
-```
 
 #data exploration :
-Brooklyn has become an increasingly popular rental area, which could provide for an interesting time series analysis. I'll narrow it to a 2 bedroom in Brooklyn.
-```{r,message=FALSE}
 two_brooklyn <- nyc_rent_agg %>% filter(RentalType=="TwoBd"&Borough=="Brooklyn")
 two_brooklyn <- two_brooklyn[,5:ncol(two_brooklyn)]%>%select(-value,-month,-year)
 two_brooklyn <- unique(two_brooklyn)
 attach(two_brooklyn)
-head(two_brooklyn)
 
 #convert dataframe to time series object
 two_brooklyn <- ts(two_brooklyn[,1],start = c(2010,1), frequency = 12)
 
 #plot the time series
 plot(two_brooklyn,plot.type = 'single',ylab="Rent ($)",xlab="Monthly",main="Brooklyn 2Bd Median Monthly Rent ($)")
-```
 
-From the plot, there is a bit of a logarithmic trend to the data with potential seasonality. The data does not appear stationary.
 
-I can take a look at a classical decomposition chart and perform a Dickey-Fuller test to confirm that the time series is not stationary.
-```{r}
+#From the plot, there is a bit of a logarithmic trend to the data with potential seasonality. The data does not appear stationary.
+
+#I can take a look at a classical decomposition chart and perform a Dickey-Fuller test to confirm that the time series is not stationary.
 decomp <- decompose((two_brooklyn),type="additive")
 plot(decomp)
-```
 
-From the classical decomposition, can see a clear trend and a seasonal pattern to the data. Because the data is monthly, the seasonal period is 12. 
+#From the classical decomposition, can see a clear trend and a seasonal pattern to the data. Because the data is monthly, the seasonal period is 12. 
 
-To test for unit-root, perform DF test. The H0 (null hypothesis) : the time series is non-stationary.
-```{r}
+#To test for unit-root, perform DF test. The H0 (null hypothesis) : the time series is non-stationary.
 #test for unit-root using Dickey-Fuller Test; 
 adf.test(two_brooklyn)
-```
-
-The p-value is 0.5892, so I do not reject H0. Because the time series is non-stationary, I can apply a difference of order 1 to correct the unit-root.
 
 
-Also, will do a quick check if a log or sqrt transformation would help stabilize the data.
+#The p-value is 0.5892, so I do not reject H0. Because the time series is non-stationary, I can apply a difference of order 1 to correct the unit-root.
 
-```{r}
+
+#Also, will do a quick check if a log or sqrt transformation would help stabilize the data.
 par(mfrow=c(1,3))
 plot((two_brooklyn),plot.type = 'single',ylab="Rent ($)",xlab="Monthly",main="Orig Brooklyn Median Monthly Rent ($)")
 plot(log(two_brooklyn),plot.type = 'single',ylab="Rent ($)",xlab="Monthly",main="Log Brooklyn Median Monthly Rent ($)")
 plot(sqrt(two_brooklyn),plot.type = 'single',ylab="Rent ($)",xlab="Monthly",main="Sqrt Brooklyn Median Monthly Rent ($)")
-```
 
-From the plots, the transformations are not doing much.
+#From the plots, the transformations are not doing much.
 
-Let's take a look at a differencing transformation. And re-test the time series for stationarity.
-```{r}
+#Let's take a look at a differencing transformation. And re-test the time series for stationarity.
 #two steps for differencing; 1 to remove trend and 1 to remove season
 two_brooklyn_diff <- diff(diff(two_brooklyn,lag=12)) 
 plot(ts(two_brooklyn_diff),
-ylab="diff(1)",main="Differenced Data Order 1")
+     ylab="diff(1)",main="Differenced Data Order 1")
 
 #test for unit-root using Dickey-Fuller Test; 
 adf.test(two_brooklyn_diff)
-```
 
-The p-value from the DF test is now 0.01, so the time series is now stationary.
+#The p-value from the DF test is now 0.01, so the time series is now stationary.
 
-
-```{r}
 par(mar=c(5,5,5,5))
 #par(mfrow=c(1,2))
 acf(two_brooklyn_diff)
 pacf(two_brooklyn_diff)
-```
 
-From the plots, it seems reasonable to consider a low order ARMA model. A potential candidates is an ARMA(1,1) model with a difference of order 1. The PACF cuts off after lag 1 decaying to 0 and the ACF cuts off after lag 1 decaying to 0. 
+#From the plots, it seems reasonable to consider a low order ARMA model. A potential candidates is an ARMA(1,1) model with a difference of order 1. The PACF cuts off after lag 1 decaying to 0 and the ACF cuts off after lag 1 decaying to 0. 
 
-Additionally from the plots, although they cut off early, siginifcance comes back around month 12 (Lag 1.0). This periodic pattern is a characteristic of seasonality with period 12. 
+#Additionally from the plots, although they cut off early, siginifcance comes back around month 12 (Lag 1.0). This periodic pattern is a characteristic of seasonality with period 12. 
 
-So, in the next steps I consider seasonality.
-```{r}
+#So, in the next steps I consider seasonality.
 par(mar=c(5,5,5,5))
 #saw that log, sqrt did not do much 
 #have a differencing of order 12  to take out seasonal component
@@ -150,81 +114,48 @@ par(mar=c(5,5,5,5))
 two_brooklyn_seasonal <- diff(diff(two_brooklyn),12)
 acf(two_brooklyn_seasonal)
 pacf(two_brooklyn_seasonal)
-```
 
-From the plots, there are multiple interpretations I can take to come up with a basket of models to run through a model selection process. First, for the non-seasonal ARMA(p,q) model there is a decaying pattern in the ACF and PACF, so can choose p=2 and q=2. Second, for the seasonal ARMA(P,Q) model can see strong autocorrelation around lag 12 and strong partial autocorrelation around lag 12 (neighborhood of lag 12). Both the ACF and PACF cut offs and in general, an MA model works better, so can choose P=0 and Q=1. I use ARMA(2,2) and SARMA(0,1). 
+#From the plots, there are multiple interpretations I can take to come up with a basket of models to run through a model selection process. First, for the non-seasonal ARMA(p,q) model there is a decaying pattern in the ACF and PACF, so can choose p=2 and q=2. Second, for the seasonal ARMA(P,Q) model can see strong autocorrelation around lag 12 and strong partial autocorrelation around lag 12 (neighborhood of lag 12). Both the ACF and PACF cut offs and in general, an MA model works better, so can choose P=0 and Q=1. I use ARMA(2,2) and SARMA(0,1). 
 
-```{r}
+
 par(mar=c(3,5,5,5))
 fit_seasonal <- Arima(two_brooklyn,order=c(2,1,2),seasonal=list(order=c(1,1,1),period=12))
-fit_seasonal
-```
 
-plot
-```{r}
 #forecast next 105values for full 2020 and first half of 2021
 plot(forecast(fit_seasonal,h=15))
 tsdiag(fit_seasonal)
 #check that data is coming from a normal population, data roughly follows the line.
 qqnorm(residuals(fit_seasonal))
 qqline(residuals(fit_seasonal))
-```
 
-There are 5 parameters to this model, 4 non-seasonal AR(4) and MA(4) and 1 seasonal MA(1). From the fit, 1 parameter is significant (interval does not contain 0) SMA(1). The AR(1) and MA(1) parameter is not signifcant as the interval contains 0. The plot of the forecast looks reasonable and the diagnostics indicate that the model is an adequate model as the ACF of the residuals and p-values are not significant (lag 0 is always 1 in the ACF of residuals). The AIC value is 1171.8. I'll try out a few difference class of models and compare to be sure this model is the best choice. 
+#There are 5 parameters to this model, 4 non-seasonal AR(4) and MA(4) and 1 seasonal MA(1). From the fit, 1 parameter is significant (interval does not contain 0) SMA(1). The AR(1) and MA(1) parameter is not signifcant as the interval contains 0. The plot of the forecast looks reasonable and the diagnostics indicate that the model is an adequate model as the ACF of the residuals and p-values are not significant (lag 0 is always 1 in the ACF of residuals). The AIC value is 1171.8. I'll try out a few difference class of models and compare to be sure this model is the best choice. 
 
 
-```{r}
 fit_seasonal1 <- Arima(two_brooklyn,order=c(2,1,2),seasonal=list(order=c(1,1,1),period=12))
-fit_seasonal1
 fit_seasonal2 <- Arima(two_brooklyn,order=c(2,1,2),seasonal=list(order=c(0,1,1),period=12))
-fit_seasonal2
 fit_seasonal2.1 <- Arima(two_brooklyn,order=c(2,1,1),seasonal=list(order=c(0,1,1),period=12))
-fit_seasonal2.1
 fit_seasonal3 <- Arima(two_brooklyn,order=c(2,1,0),seasonal=list(order=c(0,1,1),period=12))
-fit_seasonal3
 fit_seasonal4 <- Arima(two_brooklyn,order=c(1,1,0),seasonal=list(order=c(1,1,1),period=12))
-fit_seasonal4
 fit_seasonal5 <- Arima(two_brooklyn,order=c(2,1,1),seasonal=list(order=c(1,1,1),period=12))
-fit_seasonal5
 fit_seasonal6 <- Arima(two_brooklyn,order=c(1,1,1),seasonal=list(order=c(0,1,1),period=12))
-fit_seasonal6
 
-```
-
-Model                     AICc
-(2,1,2) X (1,1,1)[12]     1170.18 **
-(2,1,1) x (0,1,1)[12]     1171.84
-(2,1,0) x (0,1,1)[12]     1170.62
-(1,1,0) x (1,1,1)[12]     1172.49
-(2,1,1) x (1,1,1)[12]     1174.23 
-(1,1,1) x (0,1,1)[12]     1171.8
-
-From running a few different models, it looks like alhtough they have roughly comparable AICc values, the initial model has the smallest AICc value. I'll choose ARIMA(2,1,2)x(1,1,1)[12] to fit the data.
-```{r}
 simfcast <- forecast(fit_seasonal1,h=15)
-```
 
 
-The next 14 forecasted values (complete 2020 and first half 2021) are :
-```{r}
+#The next 14 forecasted values (complete 2020 and first half 2021) are :
 simfcast
-```
 
-For good measure, I can also perform a non-ARMA forecasting method and compare with the ARMA model. 
-
-Holt-Winters Forecast 
-```{r}
+#For good measure, I can also perform a non-ARMA forecasting method and compare with the ARMA model. 
+#Holt-Winters Forecast 
 fit_hw <- HoltWinters(two_brooklyn,seasonal = "additive")
 brooklynfcast_hw <- forecast(fit_hw, h=14)
-brooklynfcast_hw
 plot(forecast(brooklynfcast_hw))
 qqnorm(residuals(fit_hw))
 qqline(residuals(fit_hw))
-```
 
-Both the seasonal ARIMA and seasonal Holt-Winters models look reasonable, but forecast accuracy is an important aspect in determining an appropriate model. To judge forecast accuracy, I used an out-of-sample forecast validation to compare the two methods. My validation sample size was about 11% of the total sample size or the 14 most recent observations. With seasonal data, it is important to hold back a enough of the seasonality in the test sample.
-I used the root mean square error (RMSE), Mean Absolute Error (MAE), and Mean absolute Percentage Error (MAPE) measures to evaluate the forecast.
-```{r}
+#Both the seasonal ARIMA and seasonal Holt-Winters models look reasonable, but forecast accuracy is an important aspect in determining an appropriate model. To judge forecast accuracy, I used an out-of-sample forecast validation to compare the two methods. My validation sample size was about 11% of the total sample size or the 14 most recent observations. With seasonal data, it is important to hold back a enough of the seasonality in the test sample.
+#I used the root mean square error (RMSE), Mean Absolute Error (MAE), and Mean absolute Percentage Error (MAPE) measures to evaluate the forecast.
+
 length(two_brooklyn) #123
 test <- two_brooklyn[110:123]
 train <- two_brooklyn[1:109]
@@ -235,7 +166,7 @@ arimamae <- mean(abs(arimaerr))
 arimarmse<- sqrt(mean(arimaerr^2))
 arimamape <- mean(abs((arimaerr*100)/test))
 print(c(arimamae,arimarmse,arimamape))
-#hw
+
 test1 <- two_brooklyn[110:123]
 train1 <- two_brooklyn[1:109]
 traints <- ts(train1,frequency = 12)
@@ -246,6 +177,3 @@ HWmae <- mean(abs(HWerr))
 HWrmse <- sqrt(mean(HWerr^2))
 HWmape <- mean(abs((HWerr*100)/test1))
 print(c(HWmae,HWrmse,HWmape))
-```
-
-
